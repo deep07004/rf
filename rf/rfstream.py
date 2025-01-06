@@ -50,7 +50,6 @@ def __get_event_id(event):
 
 def __SAC2UTC(stats, head):
     from obspy.io.sac.util import get_sac_reftime
-    print(get_sac_reftime(stats.sac), stats[head])
     return get_sac_reftime(stats.sac) + stats[head]
 
 
@@ -336,6 +335,9 @@ class RFStream(Stream):
                         stream3c.rotate(rotate)
                 except Exception as e:
                     print(e)
+                    for tr in stream3c:
+                        print("Removing trace with onset:", tr.stats.onset)
+                        self.remove(tr)
                 
         # Multiply -1 on Q component, because Q component is pointing
         # towards the event after the rotation with ObsPy.
@@ -351,9 +353,15 @@ class RFStream(Stream):
             print("Performing deconvolution ...")
             for stream3c in tqdm(iter3c(self)):
                 kwargs.setdefault('winsrc', method)
-                stream3c.deconvolve(method=deconvolve,
+                try:
+                    stream3c.deconvolve(method=deconvolve,
                                     source_components=source_components,
                                     **kwargs)
+                except Exception as e:
+                    print(e)
+                    for tr in stream3c:
+                        print("Removing trace with onset:", tr.stats.onset)
+                        self.remove(tr)
         # Mirrow Q/R and T component at 0s for S-receiver method for a better
         # comparison with P-receiver method (converted Sp wave arrives before
         # S wave, but converted Ps wave arrives after P wave)
@@ -706,30 +714,31 @@ def rfstats(obj=None, event=None, station=None,
         traces = []
         processes =[]
         with concurrent.futures.ProcessPoolExecutor() as executor:
-            for tr in tqdm(stream):
-                p = executor.submit(rfstats, **kwargs)
+            for tr in stream:
+                p = executor.submit(rfstats, tr, event, station, phase, dist_range,
+                                    tt_model, pp_depth, pp_phase, model)
                 processes.append(p)
-            for f in concurrent.futures.as_completed(processes):
+            for f in tqdm(concurrent.futures.as_completed(processes), total=len(processes)):
                 if f.result() is not None:
-                    traces.append(tr)
+                    traces.append(f.result())
         stream.traces = traces
         return stream
     if dist_range == 'default' and phase.upper() in 'PS':
         dist_range = (30, 90) if phase.upper() == 'P' else (50, 85)
     elif dist_range == 'default':
         raise ValueError('Please specify dist_range parameter')
-    stats = AttribDict({}) if obj is None else obj
+    st = AttribDict({}) if obj is None else obj
     if event is not None and station is not None:
-        stats.update(obj2stats(event=event, station=station))
-    dist, baz, _ = gps2dist_azimuth(stats.station_latitude,
-                                    stats.station_longitude,
-                                    stats.event_latitude,
-                                    stats.event_longitude)
+        st.stats.update(obj2stats(event=event, station=station))
+    dist, baz, _ = gps2dist_azimuth(st.stats.station_latitude,
+                                    st.stats.station_longitude,
+                                    st.stats.event_latitude,
+                                    st.stats.event_longitude)
     dist = dist / 1000 / DEG2KM
     if dist_range and not dist_range[0] <= dist <= dist_range[1]:
         return
     tt_model = TauPyModel(model=tt_model)
-    arrivals = tt_model.get_travel_times(stats.event_depth, dist, (phase,))
+    arrivals = tt_model.get_travel_times(st.stats.event_depth, dist, (phase,))
     if len(arrivals) == 0:
         raise Exception('TauPy does not return phase %s at distance %s' %
                         (phase, dist))
@@ -738,21 +747,21 @@ def rfstats(obj=None, event=None, station=None,
                'distance %s -> take first arrival')
         warnings.warn(msg % (phase, dist))
     arrival = arrivals[0]
-    onset = stats.event_time + arrival.time
+    onset = st.stats.event_time + arrival.time
     inc = arrival.incident_angle
     slowness = arrival.ray_param_sec_degree
-    if obj._format == 'SAC':
+    if obj.stats._format == 'SAC':
         try:
             snr= obj.sac.user7
         except:
             snr = 0.0
     else:
         snr = 0
-    stats.update({'distance': dist, 'back_azimuth': baz, 'inclination': inc,
+    st.stats.update({'distance': dist, 'back_azimuth': baz, 'inclination': inc,
                   'onset': onset, 'slowness': slowness, 'phase': phase, 'snr':snr})
     if pp_depth is not None:
         model = load_model(model)
         if pp_phase is None:
             pp_phase = 'S' if phase.upper().endswith('P') else 'P'
-        model.ppoint(stats, pp_depth, phase=pp_phase)
-    return stats
+        model.ppoint(st.stats, pp_depth, phase=pp_phase)
+    return st
