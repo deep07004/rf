@@ -696,6 +696,7 @@ def rfstats(obj=None, event=None, station=None,
         slowness or None if epicentral distance is not in the given interval.
         Stream instance if stream was specified instead of stats.
     """
+    import concurrent.futures
     if isinstance(obj, (Stream, RFStream)):
         stream = obj
         kwargs = {'event': event, 'station': station,
@@ -703,9 +704,14 @@ def rfstats(obj=None, event=None, station=None,
                   'tt_model': tt_model, 'pp_depth': pp_depth,
                   'pp_phase': pp_phase, 'model': model}
         traces = []
-        for tr in tqdm(stream):
-            if rfstats(tr.stats, **kwargs) is not None:
-                traces.append(tr)
+        processes =[]
+        with concurrent.futures.ProcessPoolExecutor() as executor:
+            for tr in tqdm(stream):
+                p = executor.submit(rfstats, **kwargs)
+                processes.append(p)
+            for f in concurrent.futures.as_completed(processes):
+                if f.result() is not None:
+                    traces.append(tr)
         stream.traces = traces
         return stream
     if dist_range == 'default' and phase.upper() in 'PS':
