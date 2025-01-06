@@ -149,7 +149,7 @@ class IterMultipleComponents(object):
     def __init__(self, stream, key=None, number_components=None):
         substreams = collections.defaultdict(stream.__class__)
         for tr in stream:
-            k = (tr.id[:-1], str(tr.stats[key]) if key is not None else None)
+            k = (tr.id[:-1], str(tr.stats[key])[0:22] if key is not None else None)
             substreams[k].append(tr)
         n = number_components
         self.substreams = [s for _, s in sorted(substreams.items())

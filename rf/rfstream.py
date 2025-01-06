@@ -7,6 +7,7 @@ import json
 from operator import itemgetter
 from pkg_resources import resource_filename
 import warnings
+from tqdm import tqdm
 
 import numpy as np
 from obspy import read, Stream, Trace
@@ -49,6 +50,7 @@ def __get_event_id(event):
 
 def __SAC2UTC(stats, head):
     from obspy.io.sac.util import get_sac_reftime
+    print(get_sac_reftime(stats.sac), stats[head])
     return get_sac_reftime(stats.sac) + stats[head]
 
 
@@ -75,7 +77,7 @@ _HEADERS = (tuple(zip(*_STATION_GETTER))[0] +
             'onset', 'type', 'phase', 'moveout',
             'distance', 'back_azimuth', 'inclination', 'slowness',
             'pp_latitude', 'pp_longitude', 'pp_depth',
-            'box_pos', 'box_length'))
+            'box_pos', 'box_length','snr'))
 
 # The corresponding header fields in the format
 # The following headers can at the moment only be stored for H5:
@@ -85,7 +87,7 @@ _FORMATHEADERS = {'sac': ('stla', 'stlo', 'stel', 'evla', 'evlo',
                           'kuser0', 'kuser1', 'kuser2',
                           'gcarc', 'baz', 'user0', 'user1',
                           'user2', 'user3', 'user4',
-                          'user5', 'user6'),
+                          'user5', 'user6', 'user7'),
                   # field 'COMMENT' is violated for different information
                   'sh': ('COMMENT', 'COMMENT', 'COMMENT',
                          'LAT', 'LON', 'DEPTH',
@@ -93,7 +95,7 @@ _FORMATHEADERS = {'sac': ('stla', 'stlo', 'stel', 'evla', 'evlo',
                          'COMMENT', 'COMMENT', 'COMMENT',
                          'DISTANCE', 'AZIMUTH', 'INCI', 'SLOWNESS',
                          'COMMENT', 'COMMENT', 'COMMENT',
-                         'COMMENT', 'COMMENT')}
+                         'COMMENT', 'COMMENT','COMMENT')}
 _HEADER_CONVERSIONS = {'sac': {'onset': (__SAC2UTC, __UTC2SAC),
                                'event_time': (__SAC2UTC, __UTC2SAC)}}
 
@@ -323,8 +325,18 @@ class RFStream(Stream):
                 if downsample <= tr.stats.sampling_rate:
                     tr.decimate(int(tr.stats.sampling_rate) // downsample)
         if rotate:
-            for stream3c in iter3c(self):
-                stream3c.rotate(rotate)
+            for stream3c in tqdm(iter3c(self)):
+                try:
+                    npts = [tr.stats.npts for tr in stream3c]
+                    npts.sort()
+                    if npts[0] != npts[-1]:
+                        for tr in stream3c:
+                            self.remove(tr)
+                    else:
+                        stream3c.rotate(rotate)
+                except Exception as e:
+                    print(e)
+                
         # Multiply -1 on Q component, because Q component is pointing
         # towards the event after the rotation with ObsPy.
         # For a positive phase at a Moho-like velocity contrast,
@@ -336,7 +348,8 @@ class RFStream(Stream):
             if tr.stats.channel.endswith('Q'):
                 tr.data = -tr.data
         if deconvolve:
-            for stream3c in iter3c(self):
+            print("Performing deconvolution ...")
+            for stream3c in tqdm(iter3c(self)):
                 kwargs.setdefault('winsrc', method)
                 stream3c.deconvolve(method=deconvolve,
                                     source_components=source_components,
@@ -690,7 +703,7 @@ def rfstats(obj=None, event=None, station=None,
                   'tt_model': tt_model, 'pp_depth': pp_depth,
                   'pp_phase': pp_phase, 'model': model}
         traces = []
-        for tr in stream:
+        for tr in tqdm(stream):
             if rfstats(tr.stats, **kwargs) is not None:
                 traces.append(tr)
         stream.traces = traces
@@ -722,8 +735,15 @@ def rfstats(obj=None, event=None, station=None,
     onset = stats.event_time + arrival.time
     inc = arrival.incident_angle
     slowness = arrival.ray_param_sec_degree
+    if obj._format == 'SAC':
+        try:
+            snr= obj.sac.user7
+        except:
+            snr = 0.0
+    else:
+        snr = 0
     stats.update({'distance': dist, 'back_azimuth': baz, 'inclination': inc,
-                  'onset': onset, 'slowness': slowness, 'phase': phase})
+                  'onset': onset, 'slowness': slowness, 'phase': phase, 'snr':snr})
     if pp_depth is not None:
         model = load_model(model)
         if pp_phase is None:
