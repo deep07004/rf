@@ -7,6 +7,8 @@ import json
 from operator import itemgetter
 from pkg_resources import resource_filename
 import warnings
+from pathlib import Path
+from glob import has_magic, glob
 from tqdm import tqdm
 
 import numpy as np
@@ -17,7 +19,7 @@ from obspy.taup import TauPyModel
 from rf.deconvolve import deconvolve
 from rf.harmonics import harmonics
 from rf.simple_model import load_model
-from rf.util import DEG2KM, IterMultipleComponents, _add_processing_info
+from rf.util import DEG2KM, _calc_snr, IterMultipleComponents, _add_processing_info
 
 
 def __get_event_origin_prop(h):
@@ -114,11 +116,25 @@ def read_rf(pathname_or_url=None, format=None, **kwargs):
 
     See :func:`~obspy.core.stream.read` in ObsPy.
     """
+    stream = Stream()
     if pathname_or_url is None:   # use example file
         fname = resource_filename('rf', 'example/minimal_example.tar.gz')
         pathname_or_url = fname
         format = 'SAC'
-    stream = read(pathname_or_url, format=format, **kwargs)
+    if Path(pathname_or_url).is_file():
+        st = read(pathname_or_url, format=format, **kwargs)
+        for tr in st:
+                stream.append(tr)
+    if has_magic(pathname_or_url):
+        ff = glob(pathname_or_url)      
+        print("Loading %d streams for processing..." %(len(ff)))
+        for f in tqdm(ff):
+            try:
+                st = read(f, format=format, **kwargs)
+            except Exception as e:
+                print(e)
+            for tr in st:
+                stream.append(tr)
     return RFStream(stream)
 
 
@@ -249,7 +265,25 @@ class RFStream(Stream):
                 continue
             traces.append(sliced_trace)
         return self.__class__(traces)
-
+    def calc_snr(self,phase="P"):
+        import concurrent.futures
+        def iter3c(stream):
+            return IterMultipleComponents(stream, key='onset',
+                                          number_components=(3))
+        processes = []
+        traces = []
+        with concurrent.futures.ProcessPoolExecutor() as executor:
+            for stream3c in iter3c(self):
+                if len(stream3c) ==3:
+                    p = executor.submit(_calc_snr,stream3c, phase)
+                    processes.append(p)
+            for f in tqdm(concurrent.futures.as_completed(processes), total=len(processes)):
+                if f.result() is not None and isinstance(f.result(), RFStream):
+                    for tr in f.result():
+                        traces.append(tr)
+        self.traces = traces
+        return self
+    
     def deconvolve(self, *args, **kwargs):
         """
         Deconvolve source component of stream.
@@ -265,7 +299,7 @@ class RFStream(Stream):
     def rf(self, method=None, filter=None, trim=None, downsample=None,
            rotate='ZNE->LQT', deconvolve='time', source_components=None,
            **kwargs):
-        r"""
+        """
         Calculate receiver functions in-place.
 
         :param method: 'P' for P receiver functions, 'S' for S receiver
@@ -304,6 +338,7 @@ class RFStream(Stream):
         See source code of this function for the default
         deconvolution windows.
         """
+        import concurrent.futures
         def iter3c(stream):
             return IterMultipleComponents(stream, key='onset',
                                           number_components=(2, 3))
@@ -324,20 +359,18 @@ class RFStream(Stream):
                 if downsample <= tr.stats.sampling_rate:
                     tr.decimate(int(tr.stats.sampling_rate) // downsample)
         if rotate:
+            print("Rotating %s" %method)
             for stream3c in tqdm(iter3c(self)):
                 try:
                     npts = [tr.stats.npts for tr in stream3c]
                     npts.sort()
-                    if npts[0] != npts[-1]:
+                    if npts[0] != npts[-1] or len(stream3c) !=3:
                         for tr in stream3c:
                             self.remove(tr)
                     else:
                         stream3c.rotate(rotate)
                 except Exception as e:
                     print(e)
-                    for tr in stream3c:
-                        print("Removing trace with onset:", tr.stats.onset)
-                        self.remove(tr)
                 
         # Multiply -1 on Q component, because Q component is pointing
         # towards the event after the rotation with ObsPy.
@@ -351,17 +384,21 @@ class RFStream(Stream):
                 tr.data = -tr.data
         if deconvolve:
             print("Performing deconvolution ...")
-            for stream3c in tqdm(iter3c(self)):
-                kwargs.setdefault('winsrc', method)
-                try:
-                    stream3c.deconvolve(method=deconvolve,
-                                    source_components=source_components,
-                                    **kwargs)
-                except Exception as e:
-                    print(e)
-                    for tr in stream3c:
-                        print("Removing trace with onset:", tr.stats.onset)
-                        self.remove(tr)
+            processes = []
+            traces = []
+            with concurrent.futures.ProcessPoolExecutor() as executor:
+                for stream3c in iter3c(self):
+                    kwargs.setdefault('winsrc', method)
+                    if len(stream3c) ==3:
+                        p = executor.submit(stream3c.deconvolve, deconvolve,
+                                            source_components, **kwargs)
+                        processes.append(p)
+                for f in tqdm(concurrent.futures.as_completed(processes), total=len(processes)):
+                    if f.result() is not None and isinstance(f.result(), RFStream):
+                        for tr in f.result():
+                            traces.append(tr)
+            self.traces = traces
+                
         # Mirrow Q/R and T component at 0s for S-receiver method for a better
         # comparison with P-receiver method (converted Sp wave arrives before
         # S wave, but converted Ps wave arrives after P wave)
@@ -468,6 +505,42 @@ class RFStream(Stream):
         """
         from rf.profile import profile
         return profile(self, *args, **kwargs)
+    def extract(self, key=None, min_val=None, max_val=None):
+        """
+        Extract traces based on header variable and it's min max value.
+        """
+        stream = RFStream()
+        traces = []
+        if key is None:
+            return stream
+        if key == "snr" or key == "SNR":
+            if min_val is not None:
+                min_snr = float(min_val)
+            else:
+                min_snr = 0.0
+            if max_val is not None:
+                max_snr = float(max_val)
+            else:
+                max_snr = 1000.0
+            for tr in self:
+                if tr.stats.snr >= min_snr and tr.stats.snr <= max_snr:
+                    traces.append(tr)
+        if key == "baz" or key == "BAZ":
+            if min_val is not None:
+                min_baz = float(min_val)
+            else:
+                min_snr = 0.0
+            if max_val is not None:
+                max_baz = float(max_val)
+            else:
+                max_baz = 360.0
+            for tr in self:
+                if tr.stats.back_azimuth >= min_baz and tr.stats.back_azimuth <= max_baz:
+                    traces.append(tr)
+        stream.traces = traces
+        return stream
+            
+
 
     def plot_rf(self, *args, **kwargs):
         """
@@ -713,6 +786,7 @@ def rfstats(obj=None, event=None, station=None,
                   'pp_phase': pp_phase, 'model': model}
         traces = []
         processes =[]
+        print("Calculating important ray specific parameters for receiver function calculation...")
         with concurrent.futures.ProcessPoolExecutor() as executor:
             for tr in stream:
                 p = executor.submit(rfstats, tr, event, station, phase, dist_range,
@@ -750,15 +824,8 @@ def rfstats(obj=None, event=None, station=None,
     onset = st.stats.event_time + arrival.time
     inc = arrival.incident_angle
     slowness = arrival.ray_param_sec_degree
-    if obj.stats._format == 'SAC':
-        try:
-            snr= obj.sac.user7
-        except:
-            snr = 0.0
-    else:
-        snr = 0
     st.stats.update({'distance': dist, 'back_azimuth': baz, 'inclination': inc,
-                  'onset': onset, 'slowness': slowness, 'phase': phase, 'snr':snr})
+                  'onset': onset, 'slowness': slowness, 'phase': phase})
     if pp_depth is not None:
         model = load_model(model)
         if pp_phase is None:

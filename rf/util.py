@@ -163,6 +163,60 @@ class IterMultipleComponents(object):
         for s in self.substreams:
             yield s
 
+def _calc_snr(stream,phase="P"):
+    from obspy.signal.filter import envelope
+    import numpy as np
+    if phase.upper() =="P":
+        st = stream.select(component='Z').copy()[0]
+        st.detrend('demean')
+        st.detrend('linear')
+        st.filter('bandpass', freqmin=0.1, freqmax=0.8)
+        try:
+            tr_noise = st.copy()
+            tr_signal = st.copy()
+            tp = st.stats.onset
+            if (tp - st.stats.starttime) < 31:
+                time_window = tp - st.stats.starttime -1
+            else:
+                time_window = 30
+            t1 = tp-time_window-1
+            t2 = tp-1
+            nn = tr_noise.trim(t1, t2).data
+            ss = tr_signal.trim(t2, t2+time_window).data
+            snr = np.sum(envelope(ss))/(np.sum(envelope(nn))+1e-10)
+        except:
+            snr = -1.0
+    if phase.upper()[0] == "S":
+        st = stream.copy()
+        st.detrend('demean')
+        st.detrend('linear')
+        st.filter('bandpass', freqmin=0.05, freqmax=0.5)
+        try:
+            baz = st[0].stats.back_azimuth
+            inc = st[0].stats.inclination
+            ts = st[0].stats.onset
+            st.rotate("ZNE->LQT",back_azimuth=baz,inclination=inc)
+            tr_noise = st.copy()
+            tr_signal = st.copy()
+            t1 = ts - 35
+            t2 = ts-2
+            nn = tr_noise.trim(t1, t1+30)
+            ss = tr_signal.trim(t2, t2+30)
+            sh_snr = np.sum(envelope(ss.select(channel="??T")[0].data))/ \
+                (np.sum(envelope(nn.select(channel="??T")[0].data))+1e-10)
+            sv_snr = np.sum(envelope(ss.select(channel="??Q")[0].data))/ \
+                (np.sum(envelope(nn.select(channel="??Q")[0].data))+1e-10)
+            if phase.upper()[1] == "V":
+                snr = sv_snr
+            else:
+                snr = np.sqrt(sh_snr**2 + sv_snr**2) 
+        except:
+            snr = -1.0
+    for tr in stream:
+        tr.stats.snr = snr
+    return stream
+
+
 
 def direct_geodetic(latlon, azi, dist):
     """
