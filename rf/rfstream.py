@@ -12,10 +12,11 @@ from glob import has_magic, glob
 from tqdm import tqdm
 
 import numpy as np
-from obspy import read, Stream, Trace
+from obspy import read, Stream, Trace, UTCDateTime
 from obspy.core import AttribDict
 from obspy.geodetics import gps2dist_azimuth
 from obspy.taup import TauPyModel
+from scipy.signal import hilbert
 from rf.deconvolve import deconvolve
 from rf.harmonics import harmonics
 from rf.simple_model import load_model
@@ -359,7 +360,7 @@ class RFStream(Stream):
                 if downsample <= tr.stats.sampling_rate:
                     tr.decimate(int(tr.stats.sampling_rate) // downsample)
         if rotate:
-            print("Rotating %s" %method)
+            print("Rotating %s" %rotate)
             for stream3c in tqdm(iter3c(self)):
                 try:
                     npts = [tr.stats.npts for tr in stream3c]
@@ -459,7 +460,7 @@ class RFStream(Stream):
                          for tr in self])
 
     @_add_processing_info
-    def stack(self):
+    def stack(self, pws=False):
         """
         Return stack of traces with same seed ids.
 
@@ -471,8 +472,23 @@ class RFStream(Stream):
         tr = self[0]
         traces = []
         for id in ids:
+            data = np.zeros(self[0].stats.npts)
+            weight = np.zeros(self[0].stats.npts, dtype=complex)
             net, sta, loc, cha = id.split('.')
-            data = np.mean([tr.data for tr in self if tr.id == id], axis=0)
+            nb = 0
+            for tr in self:
+                if tr.id == id:
+                    nb+=1
+                    data += tr.data
+                    if pws:
+                        hilb = hilbert(tr.data)
+                        phase = np.arctan2(hilb.imag, hilb.real)
+                        weight += np.exp(1j*phase)
+                    
+            data /= float(nb)
+            weight = np.real(abs(weight/float(nb)))
+            if pws:
+                data *= weight
             header = {'network': net, 'station': sta, 'location': loc,
                       'channel': cha, 'sampling_rate': tr.stats.sampling_rate}
             for entry in ('phase', 'moveout', 'station_latitude',
@@ -484,8 +500,55 @@ class RFStream(Stream):
             if 'onset' in tr.stats:
                 onset = tr.stats.onset - tr.stats.starttime
                 tr2.stats.onset = tr2.stats.starttime + onset
+            tr2.stats.nbin = nb
             traces.append(tr2)
         return self.__class__(traces)
+    
+    
+    def bin(self, key=None, start=None, stop=None, nbins=None, pc_overlap=None, pws=False, ref=6.4):
+        traces = []
+        if key is None:
+            key="slowness"
+        if nbins is None:
+            nbins=36
+        if key not in ['slowness', 'baz', 'dist']:
+            print("\n\nBinning by %s is not implemented.\n\n" %key)
+        if pc_overlap is None:
+            pc_overlap = 0
+        if key == 'slowness':
+            stats = [tr.stats.slowness for tr in self]
+        if key == 'baz':
+            stats = [tr.stats.back_azimuth for tr in self]
+        if key == 'dist':
+            stats = [tr.stats.distance for tr in self]
+        stats.sort()
+        if start is None:
+            start = stats[0]
+        if stop is None:
+            stop = stats[-1]
+        bins = np.linspace(start, stop, nbins+1)
+        for i in range(nbins):
+            lh = bins[i]
+            rh = bins[i+1]+pc_overlap*(bins[i+1]-bins[i])
+            tmp = self.extract(key,lh,rh).copy()
+            print("Bin: %0.2f - %0.2f has %d RFs" %(lh,rh,len(tmp)))
+            if len(tmp) ==0:
+                continue
+            tmp = tmp.moveout(ref=ref).stack(pws)
+            if key == 'baz':
+                for tr in tmp:
+                    tr.stats.back_azimuth = (bins[i+1]-bins[i])/2
+                    traces.append(tr)
+            if key == 'dist':
+                for tr in tmp:
+                    tr.stats.distance = (bins[i+1]-bins[i])/2
+                    traces.append(tr)
+            if key == 'slowness':
+                for tr in tmp:
+                    tr.stats.slowness = (bins[i+1]-bins[i])/2
+                    traces.append(tr)
+        return self.__class__(traces)
+    
 
     def harmonics(self, *args, **kwargs):
         """
@@ -511,9 +574,22 @@ class RFStream(Stream):
         """
         stream = RFStream()
         traces = []
-        if key is None:
+        if key.upper() not in ['SLOWNESS','BAZ', 'DIST','ONSET']:
+            print("Extracting by %s is not yet implemented" %key)
             return stream
-        if key == "snr" or key == "SNR":
+        if key.upper() == "SLOWNESS":
+            if min_val is not None:
+                min_slo = float(min_val)
+            else:
+                min_slo = 4.5
+            if max_val is not None:
+                max_slo = float(max_val)
+            else:
+                max_slo = 13.0
+            for tr in self:
+                if tr.stats.slowness >= min_slo and tr.stats.slowness <= max_slo:
+                    traces.append(tr)
+        if key.upper() == "SNR":
             if min_val is not None:
                 min_snr = float(min_val)
             else:
@@ -525,11 +601,11 @@ class RFStream(Stream):
             for tr in self:
                 if tr.stats.snr >= min_snr and tr.stats.snr <= max_snr:
                     traces.append(tr)
-        if key == "baz" or key == "BAZ":
+        if key.upper() == "BAZ":
             if min_val is not None:
                 min_baz = float(min_val)
             else:
-                min_snr = 0.0
+                min_baz = 0.0
             if max_val is not None:
                 max_baz = float(max_val)
             else:
@@ -537,6 +613,39 @@ class RFStream(Stream):
             for tr in self:
                 if tr.stats.back_azimuth >= min_baz and tr.stats.back_azimuth <= max_baz:
                     traces.append(tr)
+        if key.upper() == "DIST":
+            if min_val is not None:
+                min_dist = float(min_val)
+            else:
+                min_dist = 0.0
+            if max_val is not None:
+                max_dist = float(max_val)
+            else:
+                max_dist = 360.0
+            for tr in self:
+                if tr.stats.distance >= min_dist and tr.stats.distance <= max_dist:
+                    traces.append(tr)
+        if key.upper() == "ONSET":
+            if not isinstance(min_val, UTCDateTime):
+                try:
+                    min_onset = UTCDateTime(min_val)
+                except Exception as e:
+                    print(e)
+                    return None
+            else:
+                min_onset = min_val
+            if not isinstance(max_val, UTCDateTime):
+                try:
+                    max_onset = UTCDateTime(max_val)
+                except Exception as e:
+                    print(e)
+                    return None
+            else:
+                max_onset = max_val
+            for tr in self:
+                if tr.stats.onset >= min_onset and tr.stats.onset <= max_onset:
+                    traces.append(tr)
+
         stream.traces = traces
         return stream
             
