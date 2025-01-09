@@ -156,6 +156,7 @@ def deconvolve(stream, method='time', func=None,
                                     **kwargs)
         for i, tr in enumerate(rsp):
             tr.data = rf_data[i].real
+            tr.stats.tshift = tshift
     else:
         rsp = func(stream.__class__(rsp), src, tshift=tshift, **kwargs)
     return stream.__class__(rsp)

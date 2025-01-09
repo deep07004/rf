@@ -12,6 +12,65 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
+def slowness_section(stream,comp="Q",smin=4.4,smax=8.8,nbin=20,tmin=-5, tmax=25,phase="Ps",
+                     ref_slo=6.4, fmin=0.1, fmax=1.0,pws=False, width=12, height=14):
+    """
+    Plot slowness section using pygmt. 
+    """
+    import pygmt
+    st = stream.select(component=comp).slice2(tmin, tmax,'onset')
+    st.filter('bandpass',freqmin=fmin, freqmax=fmax)
+    binned_st = st.bin(key='slowness',start=smin, stop=smax, nbins=nbin,
+                        pc_overlap=0, pws=pws, ref=ref_slo)
+    st_all = stream.select(component=comp).slice2(tmin, tmax,'onset')
+    st_all.moveout(phase=phase, ref=ref_slo).stack()
+    fp=open("/tmp/xyz","w")
+    for tr in binned_st:
+        n=tr.stats.npts
+        if n> 0:
+            s = np.ones(n)*tr.stats.slowness
+            tt= np.linspace(tmin,tmax,n)
+            fp.write(">\n")
+            for i, data in enumerate(tr.data):
+                fp.write("%0.4f %0.4f %0.4f\n"%(tt[i],s[i],data))
+    fp.close()
+    fig = pygmt.Figure()
+    proj = "X%fc/%fc" %(width, height)
+    fig.basemap(region=[tmin, tmax, smin-0.01, smax+0.12], projection=proj,frame=["WSne", "xa5f1+lTime [s]", 
+                        "ya.5f0.1+lSlowness [s/deg]"])
+    fig.wiggle(
+        data="/tmp/xyz",
+        scale="0.25c",
+        # Fill positive areas red
+        fillpositive="black",
+        # Fill negative areas gray
+        fillnegative="gray",
+        # Set the outline width to 1.0 point
+        pen="1.0p",
+    )
+    shift = "%fc" %height
+    fig.shift_origin(yshift=shift)
+    tr = st_all[0]
+    x = np.linspace(tmin,tmax,tr.stats.npts)
+    y = np.zeros(tr.stats.npts)
+    z = tr.data
+    proj = "X%fc/%fc" %(width, 1.5)
+    fig.basemap(region=[tmin, tmax, -1, 1] , projection=proj,frame=["wsne"])
+    fig.wiggle(
+        x = x,
+        y = y,
+        z = z,
+        scale="0.35c",
+        # Fill positive areas red
+        fillpositive="black",
+        # Fill negative areas gray
+        fillnegative="gray",
+        # Set the outline width to 1.0 point
+        pen="1.0p",
+    )
+    fig.show()
+
+
 def _label(stream):
     label_fmts = ['{network}.{station}.{location}.{channel}',
                   '{network}.{station}.{location}.{channel:.2}?',

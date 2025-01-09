@@ -247,7 +247,7 @@ class RFStream(Stream):
             t1 = tr._seconds2utc(starttime, reftime=reftime)
             t2 = tr._seconds2utc(endtime, reftime=reftime)
             tr.trim(t1, t2, **kwargs)
-        self.traces = [_i for _i in self.traces if _i.stats.npts]
+        self.traces = [_i for _i in self.traces if (_i.stats.endtime - _i.stats.starttime) == (endtime - starttime)]
         return self
 
     def slice2(self, starttime=None, endtime=None, reftime=None,
@@ -537,15 +537,15 @@ class RFStream(Stream):
             tmp = tmp.moveout(ref=ref).stack(pws)
             if key == 'baz':
                 for tr in tmp:
-                    tr.stats.back_azimuth = (bins[i+1]-bins[i])/2
+                    tr.stats.back_azimuth = bins[i]+(bins[i+1]-bins[i])/2
                     traces.append(tr)
             if key == 'dist':
                 for tr in tmp:
-                    tr.stats.distance = (bins[i+1]-bins[i])/2
+                    tr.stats.distance = bins[i]+(bins[i+1]-bins[i])/2
                     traces.append(tr)
             if key == 'slowness':
                 for tr in tmp:
-                    tr.stats.slowness = (bins[i+1]-bins[i])/2
+                    tr.stats.slowness = bins[i]+(bins[i+1]-bins[i])/2
                     traces.append(tr)
         return self.__class__(traces)
     
@@ -574,7 +574,7 @@ class RFStream(Stream):
         """
         stream = RFStream()
         traces = []
-        if key.upper() not in ['SLOWNESS','BAZ', 'DIST','ONSET']:
+        if key.upper() not in ['SLOWNESS','SNR','BAZ', 'DIST','ONSET']:
             print("Extracting by %s is not yet implemented" %key)
             return stream
         if key.upper() == "SLOWNESS":

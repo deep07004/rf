@@ -206,8 +206,9 @@ def _calc_snr(stream,phase="P"):
                 (np.sum(envelope(nn.select(channel="??T")[0].data))+1e-10)
             sv_snr = np.sum(envelope(ss.select(channel="??Q")[0].data))/ \
                 (np.sum(envelope(nn.select(channel="??Q")[0].data))+1e-10)
-            if phase.upper()[1] == "V":
-                snr = sv_snr
+            if len(phase) ==2:
+                if phase.upper()[1] == "V":
+                    snr = sv_snr
             else:
                 snr = np.sqrt(sh_snr**2 + sv_snr**2) 
         except:
