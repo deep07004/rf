@@ -12,18 +12,21 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-def slowness_section(stream,comp="Q",smin=4.4,smax=8.8,nbin=20,tmin=-5, tmax=25,phase="Ps",
-                     ref_slo=6.4, fmin=0.1, fmax=1.0,pws=False, width=12, height=14):
+def slowness_section(stream,comp="Q",smin=4.4,smax=8.8,nbin=20,tmin=-5, tmax=25, phase="Ps",
+                     ref_slo=6.4, fmin=None, fmax=None,pws=False, width=12, height=14,
+                     scale=0.25, showfig=True,savefig=True):
     """
     Plot slowness section using pygmt. 
     """
     import pygmt
-    st = stream.select(component=comp).slice2(tmin, tmax,'onset')
-    st.filter('bandpass',freqmin=fmin, freqmax=fmax)
+    st = stream.select(component=comp).slice2(tmin, tmax,'onset').copy()
+    if fmin is not None and fmax is not None:
+        st.filter('bandpass',freqmin=fmin, freqmax=fmax)
+    st.moveout(phase=phase, ref=ref_slo)
     binned_st = st.bin(key='slowness',start=smin, stop=smax, nbins=nbin,
-                        pc_overlap=0, pws=pws, ref=ref_slo)
-    st_all = stream.select(component=comp).slice2(tmin, tmax,'onset')
-    st_all.moveout(phase=phase, ref=ref_slo).stack()
+                        pc_overlap=0, pws=pws, phase=phase, ref=ref_slo)
+    st_all = st.copy().stack()
+    
     fp=open("/tmp/xyz","w")
     for tr in binned_st:
         n=tr.stats.npts
@@ -40,7 +43,73 @@ def slowness_section(stream,comp="Q",smin=4.4,smax=8.8,nbin=20,tmin=-5, tmax=25,
                         "ya.5f0.1+lSlowness [s/deg]"])
     fig.wiggle(
         data="/tmp/xyz",
-        scale="0.25c",
+        scale=str(scale)+"c",
+        # Fill positive areas red
+        fillpositive="black",
+        # Fill negative areas gray
+        fillnegative="gray",
+        # Set the outline width to 1.0 point
+        pen="1.0p",
+    )
+    shift = "%fc" %height
+    fig.shift_origin(yshift=shift)
+    tr = st_all[0]
+    x = np.linspace(tmin,tmax,tr.stats.npts)
+    y = np.zeros(tr.stats.npts)
+    z = tr.data
+    proj = "X%fc/%fc" %(width, 1.4)
+    fig.basemap(region=[tmin, tmax, -1, 1] , projection=proj,frame=["wsne"])
+    fig.wiggle(
+        x = x,
+        y = y,
+        z = z,
+        scale=str(scale-0.05)+"c",
+        # Fill positive areas red
+        fillpositive="black",
+        # Fill negative areas gray
+        fillnegative="gray",
+        # Set the outline width to 1.0 point
+        pen="1.0p",
+    )
+    if savefig:
+        fname="%s_%s_slo.pdf" %(tr.stats.station,comp)
+        fig.savefig(fname)
+        fig.show()
+    if showfig:
+        fig.show()
+
+def baz_section(stream,comp="Q",bazmin=0,bazmax=360,nbin=36,tmin=-5, tmax=25, phase="Ps",
+                     ref_slo=6.4, fmin=None, fmax=None,pws=False, width=12, height=14,scale=0.25, 
+                     showfig=True,savefig=True):
+    """
+    Plot backazimuth section using pygmt. 
+    """
+    import pygmt
+    st = stream.select(component=comp).slice2(tmin, tmax,'onset').copy()
+    if fmin is not None and fmax is not None:
+        st.filter('bandpass',freqmin=fmin, freqmax=fmax)
+    st.moveout(phase=phase, ref=ref_slo)
+    binned_st = st.bin(key='baz',start=bazmin, stop=bazmax, nbins=nbin,
+                        pc_overlap=0, pws=pws, phase=phase, ref=ref_slo)
+    st_all = st.copy().stack()
+    
+    fp=open("/tmp/xyz","w")
+    for tr in binned_st:
+        n=tr.stats.npts
+        if n> 0:
+            baz = np.ones(n)*tr.stats.back_azimuth
+            tt= np.linspace(tmin,tmax,n)
+            fp.write(">\n")
+            for i, data in enumerate(tr.data):
+                fp.write("%0.4f %0.4f %0.4f\n"%(tt[i],baz[i],data))
+    fp.close()
+    fig = pygmt.Figure()
+    proj = "X%fc/%fc" %(width, height)
+    fig.basemap(region=[tmin, tmax, bazmin-5, bazmax+9], projection=proj,frame=["WSne", "xa5f1+lTime [s]", 
+                        "ya20f1+lBackazimuth [deg]"])
+    fig.wiggle(
+        data="/tmp/xyz",
+        scale=str(scale)+"c",
         # Fill positive areas red
         fillpositive="black",
         # Fill negative areas gray
@@ -60,7 +129,7 @@ def slowness_section(stream,comp="Q",smin=4.4,smax=8.8,nbin=20,tmin=-5, tmax=25,
         x = x,
         y = y,
         z = z,
-        scale="0.35c",
+        scale=str(scale-0.05)+"c",
         # Fill positive areas red
         fillpositive="black",
         # Fill negative areas gray
@@ -68,8 +137,12 @@ def slowness_section(stream,comp="Q",smin=4.4,smax=8.8,nbin=20,tmin=-5, tmax=25,
         # Set the outline width to 1.0 point
         pen="1.0p",
     )
-    fig.show()
-
+    if savefig:
+        fname="%s_%s_baz.pdf" %(tr.stats.station,comp)
+        fig.savefig(fname)
+        fig.show()
+    if showfig:
+        fig.show()
 
 def _label(stream):
     label_fmts = ['{network}.{station}.{location}.{channel}',

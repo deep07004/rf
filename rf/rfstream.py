@@ -266,6 +266,40 @@ class RFStream(Stream):
                 continue
             traces.append(sliced_trace)
         return self.__class__(traces)
+    def rotate_by_nsv(self, vp=None, vs=None):
+        """
+        Roate using Kennet's rotation matrix
+        """
+        if vp is None:
+            vp = 5.8
+        if vs is None:
+            vs = 2.75
+        if len(self) != 3:
+            print("All three components required for rotation by NSV. %d provided" %(len(self)))
+            return self
+        try:
+            self.rotate('NE->RT')
+        except Exception as e:
+            print(e)
+            return self
+        ray_par = self[0].stats.slowness/111.1949
+        qalpha = np.sqrt(1/vp**2 -ray_par**2)
+        qbeta = np.sqrt(1/vs**2 -ray_par**2)
+        z = self.select(component="Z")[0].data
+        r = self.select(component="R")[0].data
+        t = self.select(component="T")[0].data
+        P = (ray_par*(vs)**2/vp) * r + (((vs*ray_par)**2 -0.5)/(vp*qalpha)) * z
+        SV = ((0.5 - (vs*ray_par)**2)/(vs * qbeta)) * r + ray_par*vs * z
+        SH = t/2.0
+        self[0].stats.channel = self[0].stats.channel[0:2]+"L"
+        self[0].data = P
+        self[1].stats.channel = self[1].stats.channel[0:2]+"Q"
+        self[1].data = SV
+        self[2].stats.channel = self[2].stats.channel[0:2]+"T"
+        self[2].data = SH
+        return self
+
+
     def calc_snr(self,phase="P"):
         import concurrent.futures
         def iter3c(stream):
@@ -298,7 +332,7 @@ class RFStream(Stream):
 
     @_add_processing_info
     def rf(self, method=None, filter=None, trim=None, downsample=None,
-           rotate='ZNE->LQT', deconvolve='time', source_components=None,
+           rotate='ZNE->LQT',vp=None, vs=None, deconvolve='time', source_components=None,
            **kwargs):
         """
         Calculate receiver functions in-place.
@@ -369,7 +403,10 @@ class RFStream(Stream):
                         for tr in stream3c:
                             self.remove(tr)
                     else:
-                        stream3c.rotate(rotate)
+                        if rotate.upper() == "NSV":
+                            stream3c.rotate_by_nsv(vp, vs)
+                        else:
+                            stream3c.rotate(rotate)
                 except Exception as e:
                     print(e)
                 
@@ -432,8 +469,7 @@ class RFStream(Stream):
         model.moveout(self, phase=phase, ref=ref)
         for tr in self:
             tr.stats.moveout = phase
-            tr.stats.slowness_before_moveout = tr.stats.slowness
-            tr.stats.slowness = ref
+            tr.stats.slowness_after_moveout = ref
         return self
 
     def ppoints(self, pp_depth, pp_phase=None, model='iasp91'):
@@ -505,7 +541,7 @@ class RFStream(Stream):
         return self.__class__(traces)
     
     
-    def bin(self, key=None, start=None, stop=None, nbins=None, pc_overlap=None, pws=False, ref=6.4):
+    def bin(self, key=None, start=None, stop=None, nbins=None, pc_overlap=None, pws=False, phase=None, ref=6.4):
         traces = []
         if key is None:
             key="slowness"
@@ -534,7 +570,7 @@ class RFStream(Stream):
             print("Bin: %0.2f - %0.2f has %d RFs" %(lh,rh,len(tmp)))
             if len(tmp) ==0:
                 continue
-            tmp = tmp.moveout(ref=ref).stack(pws)
+            tmp = tmp.stack(pws)
             if key == 'baz':
                 for tr in tmp:
                     tr.stats.back_azimuth = bins[i]+(bins[i+1]-bins[i])/2
@@ -547,7 +583,7 @@ class RFStream(Stream):
                 for tr in tmp:
                     tr.stats.slowness = bins[i]+(bins[i+1]-bins[i])/2
                     traces.append(tr)
-        return self.__class__(traces)
+        return RFStream(traces)
     
 
     def harmonics(self, *args, **kwargs):
@@ -574,6 +610,7 @@ class RFStream(Stream):
         """
         stream = RFStream()
         traces = []
+        st = self.copy()
         if key.upper() not in ['SLOWNESS','SNR','BAZ', 'DIST','ONSET']:
             print("Extracting by %s is not yet implemented" %key)
             return stream
@@ -586,9 +623,10 @@ class RFStream(Stream):
                 max_slo = float(max_val)
             else:
                 max_slo = 13.0
-            for tr in self:
-                if tr.stats.slowness >= min_slo and tr.stats.slowness <= max_slo:
-                    traces.append(tr)
+            val = np.array([tr.stats.slowness for tr in st])
+            ii = np.where((val>=min_slo) & (val<=max_slo))[0]
+            for i in ii:
+                traces.append(st[i])
         if key.upper() == "SNR":
             if min_val is not None:
                 min_snr = float(min_val)
@@ -598,9 +636,10 @@ class RFStream(Stream):
                 max_snr = float(max_val)
             else:
                 max_snr = 1000.0
-            for tr in self:
-                if tr.stats.snr >= min_snr and tr.stats.snr <= max_snr:
-                    traces.append(tr)
+            val = np.array([tr.stats.snr for tr in st])
+            ii = np.where((val>=min_snr) & (val<=max_snr))[0]
+            for i in ii:
+                traces.append(st[i])
         if key.upper() == "BAZ":
             if min_val is not None:
                 min_baz = float(min_val)
@@ -610,9 +649,10 @@ class RFStream(Stream):
                 max_baz = float(max_val)
             else:
                 max_baz = 360.0
-            for tr in self:
-                if tr.stats.back_azimuth >= min_baz and tr.stats.back_azimuth <= max_baz:
-                    traces.append(tr)
+            val = np.array([tr.stats.back_azimuth for tr in st])
+            ii = np.where((val>=min_baz) & (val<=max_baz))[0]
+            for i in ii:
+                traces.append(st[i])
         if key.upper() == "DIST":
             if min_val is not None:
                 min_dist = float(min_val)
@@ -622,9 +662,10 @@ class RFStream(Stream):
                 max_dist = float(max_val)
             else:
                 max_dist = 360.0
-            for tr in self:
-                if tr.stats.distance >= min_dist and tr.stats.distance <= max_dist:
-                    traces.append(tr)
+            val = np.array([tr.stats.distance for tr in st])
+            ii = np.where((val>=min_dist) & (val<=max_dist))[0]
+            for i in ii:
+                traces.append(st[i])
         if key.upper() == "ONSET":
             if not isinstance(min_val, UTCDateTime):
                 try:
@@ -642,7 +683,7 @@ class RFStream(Stream):
                     return None
             else:
                 max_onset = max_val
-            for tr in self:
+            for tr in st:
                 if tr.stats.onset >= min_onset and tr.stats.onset <= max_onset:
                     traces.append(tr)
 
