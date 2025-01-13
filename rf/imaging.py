@@ -21,18 +21,18 @@ def slowness_section(stream,comp="Q",smin=4.4,smax=8.8,nbin=20,tmin=-5, tmax=25,
     import pygmt
     st = stream.select(component=comp).slice2(tmin, tmax,'onset').copy()
     if fmin is not None and fmax is not None:
-        st.filter('bandpass',freqmin=fmin, freqmax=fmax)
-    st.moveout(phase=phase, ref=ref_slo)
+        st.filter('bandpass',freqmin=fmin, freqmax=fmax, corners=2, zerophase=True)
+    st = st.moveout(phase=phase, ref=ref_slo)
     binned_st = st.bin(key='slowness',start=smin, stop=smax, nbins=nbin,
                         pc_overlap=0, pws=pws, phase=phase, ref=ref_slo)
-    st_all = st.copy().stack()
+    st_all = st.stack()
     
     fp=open("/tmp/xyz","w")
     for tr in binned_st:
         n=tr.stats.npts
         if n> 0:
             s = np.ones(n)*tr.stats.slowness
-            tt= np.linspace(tmin,tmax,n)
+            tt= tr.times(reftime=tr.stats.onset)
             fp.write(">\n")
             for i, data in enumerate(tr.data):
                 fp.write("%0.4f %0.4f %0.4f\n"%(tt[i],s[i],data))
@@ -54,7 +54,7 @@ def slowness_section(stream,comp="Q",smin=4.4,smax=8.8,nbin=20,tmin=-5, tmax=25,
     shift = "%fc" %height
     fig.shift_origin(yshift=shift)
     tr = st_all[0]
-    x = np.linspace(tmin,tmax,tr.stats.npts)
+    x = tr.times(reftime=tr.stats.onset)
     y = np.zeros(tr.stats.npts)
     z = tr.data
     proj = "X%fc/%fc" %(width, 1.4)
@@ -72,9 +72,8 @@ def slowness_section(stream,comp="Q",smin=4.4,smax=8.8,nbin=20,tmin=-5, tmax=25,
         pen="1.0p",
     )
     if savefig:
-        fname="%s_%s_slo.pdf" %(tr.stats.station,comp)
+        fname="%s_%s_slo.jpg" %(tr.stats.station,comp)
         fig.savefig(fname)
-        fig.show()
     if showfig:
         fig.show()
 
@@ -87,18 +86,18 @@ def baz_section(stream,comp="Q",bazmin=0,bazmax=360,nbin=36,tmin=-5, tmax=25, ph
     import pygmt
     st = stream.select(component=comp).slice2(tmin, tmax,'onset').copy()
     if fmin is not None and fmax is not None:
-        st.filter('bandpass',freqmin=fmin, freqmax=fmax)
-    st.moveout(phase=phase, ref=ref_slo)
+        st.filter('bandpass',freqmin=fmin, freqmax=fmax, corners=2, zerophase=True)
+    st = st.moveout(phase=phase, ref=ref_slo)
     binned_st = st.bin(key='baz',start=bazmin, stop=bazmax, nbins=nbin,
                         pc_overlap=0, pws=pws, phase=phase, ref=ref_slo)
-    st_all = st.copy().stack()
+    st_all = st.stack()
     
     fp=open("/tmp/xyz","w")
     for tr in binned_st:
         n=tr.stats.npts
         if n> 0:
             baz = np.ones(n)*tr.stats.back_azimuth
-            tt= np.linspace(tmin,tmax,n)
+            tt= tr.times(reftime=tr.stats.onset)
             fp.write(">\n")
             for i, data in enumerate(tr.data):
                 fp.write("%0.4f %0.4f %0.4f\n"%(tt[i],baz[i],data))
@@ -120,7 +119,7 @@ def baz_section(stream,comp="Q",bazmin=0,bazmax=360,nbin=36,tmin=-5, tmax=25, ph
     shift = "%fc" %height
     fig.shift_origin(yshift=shift)
     tr = st_all[0]
-    x = np.linspace(tmin,tmax,tr.stats.npts)
+    x = tr.times(reftime=tr.stats.onset)
     y = np.zeros(tr.stats.npts)
     z = tr.data
     proj = "X%fc/%fc" %(width, 1.5)
@@ -138,9 +137,8 @@ def baz_section(stream,comp="Q",bazmin=0,bazmax=360,nbin=36,tmin=-5, tmax=25, ph
         pen="1.0p",
     )
     if savefig:
-        fname="%s_%s_baz.pdf" %(tr.stats.station,comp)
+        fname="%s_%s_baz.jpg" %(tr.stats.station,comp)
         fig.savefig(fname)
-        fig.show()
     if showfig:
         fig.show()
 
