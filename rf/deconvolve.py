@@ -72,6 +72,8 @@ def deconvolve(stream, method='time', func=None,
         pre-event window whose length depends on the trace length prior to the
         onset time.
     """
+    print("Deconvolution parameters\n")
+    print("\n",method, source_components, winsrc,"\n")
     if method == 'freq':
         method = 'waterlevel'
     if method not in ('time', 'waterlevel', 'iterative', 'multitaper', 'func'):
@@ -118,6 +120,7 @@ def deconvolve(stream, method='time', func=None,
 #    if winsrc[1] > lenrsp_sec - onset_sec:
 #        winsrc[1] = lenrsp_sec - onset_sec
     # prepare source and response list
+    
     if src in rsp:
         src = src.copy()
     src.trim(onset + winsrc[0], onset + winsrc[1], pad=True, fill_value=0.)
@@ -363,7 +366,9 @@ def deconv_time(rsp_list, src, shift, spiking=1., length=None, normalize=0,
     flag = False
     RF_list = []
     STS = _acorrt(src, length)
-    STS = STS / STS[0]
+    if STS[0] == 0 or STS[0] == 'nan':
+        return [x*0 for x in rsp_list]
+    STS /= STS[0]
     STS[0] += spiking
     if not isinstance(rsp_list, (list, tuple)):
         flag = True

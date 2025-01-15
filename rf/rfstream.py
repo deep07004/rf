@@ -110,6 +110,17 @@ _H5INDEX = {
     'profile': 'waveforms/{channel[2]}_{box_pos}'
 }
 
+def _to_rf_from_ah(stats):
+    ah = stats.ah
+    stats.event_latitude = ah.event.latitude
+    stats.event_longitude = ah.event.longitude
+    stats.event_depth = ah.event.depth
+    stats.event_magnitude = ah.extras[0]
+    stats.event_time = ah.event.origin_time
+    stats.station_elevation = ah.station.elevation
+    stats.station_latitude = ah.station.latitude
+    stats.station_longitude = ah.station.longitude
+    return stats
 
 def read_rf(pathname_or_url=None, format=None, **kwargs):
     """
@@ -285,7 +296,7 @@ class RFStream(Stream):
         ray_par = self[0].stats.slowness/111.1949
         qalpha = np.sqrt(1/vp**2 -ray_par**2)
         qbeta = np.sqrt(1/vs**2 -ray_par**2)
-        z = self.select(component="Z")[0].data
+        z = self.select(component="Z")[0].data*-1.0 # Z need to be positive down. So flip it.
         r = self.select(component="R")[0].data
         t = self.select(component="T")[0].data
         P = (ray_par*(vs)**2/vp) * r + (((vs*ray_par)**2 -0.5)/(vp*qalpha)) * z
@@ -307,6 +318,7 @@ class RFStream(Stream):
                                           number_components=(3))
         processes = []
         traces = []
+        print("\n Caluclating SNR for phase %s\n"%(phase))
         with concurrent.futures.ProcessPoolExecutor() as executor:
             for stream3c in iter3c(self):
                 if len(stream3c) ==3:
@@ -373,6 +385,8 @@ class RFStream(Stream):
         See source code of this function for the default
         deconvolution windows.
         """
+        print("Deconvolution parameters\n")
+        print("\n",deconvolve, source_components,"\n")
         import concurrent.futures
         def iter3c(stream):
             return IterMultipleComponents(stream, key='onset',
@@ -418,24 +432,25 @@ class RFStream(Stream):
         # away from the event.
         # (compare issue #4)
         for tr in self:
-            if tr.stats.channel.endswith('Q'):
+            if not rotate.upper()=="NSV" and tr.stats.channel.endswith('Q'):
                 tr.data = -tr.data
         if deconvolve:
-            print("Performing deconvolution ...")
-            processes = []
-            traces = []
-            with concurrent.futures.ProcessPoolExecutor() as executor:
-                for stream3c in iter3c(self):
-                    kwargs.setdefault('winsrc', method)
-                    if len(stream3c) ==3:
-                        p = executor.submit(stream3c.deconvolve, deconvolve,
-                                            source_components, **kwargs)
-                        processes.append(p)
-                for f in tqdm(concurrent.futures.as_completed(processes), total=len(processes)):
-                    if f.result() is not None and isinstance(f.result(), RFStream):
-                        for tr in f.result():
-                            traces.append(tr)
-            self.traces = traces
+            stream3c.deconvolve(method=deconvolve,source_components=source_components, **kwargs)
+            #print("Performing deconvolution ...")
+            #processes = []
+            #traces = []
+            #with concurrent.futures.ProcessPoolExecutor() as executor:
+            #    for stream3c in iter3c(self):
+            #        kwargs.setdefault('winsrc', method)
+            #        if len(stream3c) ==3:
+            #            p = executor.submit(stream3c.deconvolve, deconvolve,
+            #                                source_components, **kwargs)
+            #            processes.append(p)
+            #    for f in tqdm(concurrent.futures.as_completed(processes), total=len(processes)):
+            #        if f.result() is not None and isinstance(f.result(), RFStream):
+            #            for tr in f.result():
+            #                traces.append(tr)
+            #self.traces = traces
                 
         # Mirrow Q/R and T component at 0s for S-receiver method for a better
         # comparison with P-receiver method (converted Sp wave arrives before
@@ -780,6 +795,9 @@ class RFTrace(Trace):
                 return
             format = st._format
         format = format.lower()
+        if format == "ah":
+            st = _to_rf_from_ah(st)
+            return
         if format == 'q':
             format = 'sh'
         try:
