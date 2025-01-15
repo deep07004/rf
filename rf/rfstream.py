@@ -435,7 +435,11 @@ class RFStream(Stream):
             if not rotate.upper()=="NSV" and tr.stats.channel.endswith('Q'):
                 tr.data = -tr.data
         if deconvolve:
-            stream3c.deconvolve(method=deconvolve,source_components=source_components, **kwargs)
+            for stream3c in iter3c(self):
+                kwargs.setdefault('winsrc', method)
+                stream3c.deconvolve(method=deconvolve,
+                                    source_components=source_components,
+                                    **kwargs)
             #print("Performing deconvolution ...")
             #processes = []
             #traces = []
