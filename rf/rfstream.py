@@ -435,26 +435,29 @@ class RFStream(Stream):
             if not rotate.upper()=="NSV" and tr.stats.channel.endswith('Q'):
                 tr.data = -tr.data
         if deconvolve:
-            for stream3c in iter3c(self):
-                kwargs.setdefault('winsrc', method)
-                stream3c.deconvolve(method=deconvolve,
-                                    source_components=source_components,
-                                    **kwargs)
-            #print("Performing deconvolution ...")
-            #processes = []
-            #traces = []
-            #with concurrent.futures.ProcessPoolExecutor() as executor:
-            #    for stream3c in iter3c(self):
-            #        kwargs.setdefault('winsrc', method)
-            #        if len(stream3c) ==3:
-            #            p = executor.submit(stream3c.deconvolve, deconvolve,
-            #                                source_components, **kwargs)
-            #            processes.append(p)
-            #    for f in tqdm(concurrent.futures.as_completed(processes), total=len(processes)):
-            #        if f.result() is not None and isinstance(f.result(), RFStream):
-            #            for tr in f.result():
-            #                traces.append(tr)
-            #self.traces = traces
+            #for stream3c in iter3c(self):
+            #    kwargs.setdefault('winsrc', method)
+            #    stream3c.deconvolve(method=deconvolve,
+            #                        source_components=source_components,
+            #                        **kwargs)
+            print("Performing deconvolution ...")
+            processes = []
+            traces = []
+            with concurrent.futures.ProcessPoolExecutor() as executor:
+                for stream3c in iter3c(self):
+                    src = [tr for tr in stream3c if tr.stats.channel[-1] in source_components]
+                    kwargs.setdefault('winsrc', method)
+                    if len(stream3c) ==3 and len(src)==1:
+                        p = executor.submit(stream3c.deconvolve, method=deconvolve,
+                                            source_components=source_components, **kwargs)
+                        processes.append(p)
+                    else:
+                        print(stream3c)
+                for f in tqdm(concurrent.futures.as_completed(processes), total=len(processes)):
+                    if f.result() is not None and isinstance(f.result(), RFStream):
+                        for tr in f.result():
+                            traces.append(tr)
+            self.traces = traces
                 
         # Mirrow Q/R and T component at 0s for S-receiver method for a better
         # comparison with P-receiver method (converted Sp wave arrives before

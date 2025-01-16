@@ -72,8 +72,6 @@ def deconvolve(stream, method='time', func=None,
         pre-event window whose length depends on the trace length prior to the
         onset time.
     """
-    print("Deconvolution parameters\n")
-    print("\n",method, source_components, winsrc,"\n")
     if method == 'freq':
         method = 'waterlevel'
     if method not in ('time', 'waterlevel', 'iterative', 'multitaper', 'func'):
