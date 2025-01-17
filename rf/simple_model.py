@@ -158,6 +158,7 @@ class SimpleModel(object):
         :param phase: 'Ps', 'Sp', 'Ppss' or other multiples
         :param ref: reference slowness (ray parameter) in s/deg
         """
+        from scipy.interpolate import CubicSpline
         for tr in stream:
             st = tr.stats
             if not (st.starttime <= st.onset <= st.endtime):
@@ -173,6 +174,8 @@ class SimpleModel(object):
                 t = -time0 - np.arange(index0) * st.delta
                 new_t = -np.interp(-t, -t0, -t1, left=0, right=0)
                 data = np.interp(-t, -new_t, old_data, left=0., right=0.)
+                #cs = (t,old_data)
+                #data = cs(new_t)
                 tr.data[:index0] = data[::-1]
             else:
                 if t0[-1] > t1[-1]:
@@ -184,6 +187,8 @@ class SimpleModel(object):
                 new_t = np.interp(t, t0, t1, left=0, right=None)
                 # interpolate data at new times to data samples
                 data = np.interp(t, new_t, old_data, left=None, right=0.)
+                #cs = (t,old_data)
+                #data = cs(new_t)
                 tr.data[index0:] = data
         return stream
 
