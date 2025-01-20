@@ -139,7 +139,7 @@ def read_rf(pathname_or_url=None, format=None, **kwargs):
                 stream.append(tr)
     if has_magic(pathname_or_url):
         ff = glob(pathname_or_url)      
-        print("Loading %d streams for processing..." %(len(ff)))
+        print("\nLoading %d traces for processing ..." %(len(ff)))
         for f in tqdm(ff):
             try:
                 st = read(f, format=format, **kwargs)
@@ -318,7 +318,7 @@ class RFStream(Stream):
                                           number_components=(3))
         processes = []
         traces = []
-        print("\n Caluclating SNR for phase %s\n"%(phase))
+        print("\n Caluclating %s SNR\n"%(phase))
         with concurrent.futures.ProcessPoolExecutor() as executor:
             for stream3c in iter3c(self):
                 if len(stream3c) ==3:
@@ -385,8 +385,8 @@ class RFStream(Stream):
         See source code of this function for the default
         deconvolution windows.
         """
-        print("Deconvolution parameters\n")
-        print("\n",deconvolve, source_components,"\n")
+        #print("Deconvolution parameters\n")
+        #print("\n",deconvolve, source_components,"\n")
         import concurrent.futures
         def iter3c(stream):
             return IterMultipleComponents(stream, key='onset',
@@ -440,7 +440,7 @@ class RFStream(Stream):
             #    stream3c.deconvolve(method=deconvolve,
             #                        source_components=source_components,
             #                        **kwargs)
-            print("Performing deconvolution ...")
+            print("\nPerforming deconvolution ...")
             processes = []
             traces = []
             with concurrent.futures.ProcessPoolExecutor() as executor:
@@ -452,7 +452,8 @@ class RFStream(Stream):
                                             source_components=source_components, **kwargs)
                         processes.append(p)
                     else:
-                        print(stream3c)
+                        for _tr in stream3c:
+                            print(_tr.stats.starttime, _tr.stats.endtime)
                 for f in tqdm(concurrent.futures.as_completed(processes), total=len(processes)):
                     if f.result() is not None and isinstance(f.result(), RFStream):
                         for tr in f.result():
@@ -488,6 +489,7 @@ class RFStream(Stream):
         if phase is None:
             phase = self.method + {'P': 's', 'S': 'p'}[self.method]
         model = load_model(model)
+        print("\nMoveout correcting for phase %s and reference slowness %0.2f\n" %(phase, ref))
         model.moveout(self, phase=phase, ref=ref)
         for tr in self:
             tr.stats.moveout = phase
