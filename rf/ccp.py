@@ -73,7 +73,7 @@ class CCPImage(object):
 
     def migrate(self, tr):
         """
-        We will use sperical travel time equation for migration. So eath flattening 
+        We will use spherical travel time equation for migration. So eath flattening 
         transfomation is not required and slowness should be in deg/radian.
         """
         P = tr.stats.slowness * 57.295
