@@ -68,8 +68,8 @@ class CCPImage(object):
             if len(_data) > 0:
                 for _tmp in _data:
                     i, j, val, wt = _tmp
-                    self.data[i,j] = val
-                    self.weight[i,j] = wt
+                    self.data[i,j] += val
+                    self.weight[i,j] += wt
 
 
     def migrate(self, tr):
@@ -218,6 +218,4 @@ class CCPImage(object):
             fig.savefig(fn)
         else:
             fig.show()
-
-        
 
