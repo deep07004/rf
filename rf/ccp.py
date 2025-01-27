@@ -1,13 +1,14 @@
 from obspy.geodetics import gps2dist_azimuth
 import numpy as np
+import pygmt.figure
 from tqdm import tqdm
 
 def avg_vpvs(mod, d0, d):
     _tmp = mod[mod[:,0]>=d0]
     tmp = _tmp[_tmp[:,0]<=d]
-    if tmp.shape[0] ==0:
+    if tmp.shape[0] == 0:
         return _tmp[0,1],_tmp[0,2]
-    elif tmp.shape[0] ==0:
+    elif tmp.shape[0] == 1:
         return tmp[0,1], tmp[0,2]
     vp = 0
     vs = 0
@@ -54,8 +55,8 @@ class CCPImage(object):
         self.nz = int(np.ceil(self.max_depth/self.grid_w))
         if model:
             self.mod = np.loadtxt(model)
-        self.data = np.zeros([self.nx,self.ny])
-        self.weight = np.zeros([self.nx,self.ny])
+        self.data = np.zeros([self.nx+1,self.ny])
+        self.weight = np.zeros([self.nx+1,self.ny])
 
 
     def add_data(self, stream=None):
@@ -86,9 +87,10 @@ class CCPImage(object):
         out = []
         dist, saz, junk = gps2dist_azimuth(self.profile[0],self.profile[1],stla, stlo)
         dist /=1000.0
-        phi = (self.azm - saz)*np.pi/180.0
+        phi = (saz - self.azm )*np.pi/180.0
         xx = np.cos(phi) * dist # distance along the profile
         yy = np.sin(phi) * dist # distance from the profile
+        caz = (baz - self.azm)*np.pi/180.0
         if abs(yy) > self.width or (xx < 0 or xx> self.length):
             print("Trace %s is outside of profile diimension. Skipping" %(tr.id))
             return out
@@ -112,9 +114,9 @@ class CCPImage(object):
             dx = (dd-dd0)* P/b
             DX += dx
             # Find the grid index where the ray segement begins and end
-            dx *= np.cos(phi) # project the horizontal progress into the profile
-            i = int(np.ceil(xx / self.width))
-            j = int(np.ceil((xx + dx) / self.width))
+            dx *= np.cos(caz) # project the horizontal progress into the profile
+            i = int(np.ceil(xx / self.grid_w))
+            j = int(np.ceil((xx + dx) / self.grid_w))
             if j == 0 or j > self.nx:
                 # Ray is out of grid boundary
                 break
@@ -135,7 +137,8 @@ class CCPImage(object):
                     out.append([i,k,data_sum, weight])
                 else:
                     for i4 in range(i-i3+1,i+i3):
-                        out.append([i4,k,data_sum,weight])
+                        if i4 > 0 and i4 < self.nx:
+                            out.append([i4,k,data_sum,weight])
             else:
                 nseg = abs(j-i)
                 #Compute contribution from each segment
@@ -156,7 +159,7 @@ class CCPImage(object):
                     seg_contri.append(((xx+dx) - (j-1) * self.grid_w )/dx)
                 else:
                     seg_contri.append(((xx+dx) - j * self.grid_w )/dx)
-                for m in nseg:
+                for m in range(nseg):
                     if j>i:
                         ix = i + m
                     else:
@@ -180,6 +183,41 @@ class CCPImage(object):
                         out.append([i,k,data_sum, weight])
                     else:
                         for i4 in range(i-i3+1,i+i3):
-                            out.append([i4,k,data_sum,weight])
+                            if i4 > 0 and i4 < self.nx:
+                                out.append([i4,k,data_sum,weight])
             xx += dx
-        return out   
+        return out
+    def plot(self, vmin = -0.05, vmax = 0.05, fname=None):
+        import pygmt
+        
+        width = 14
+        height = ((self.max_depth-self.min_depth)/self.length)*width
+        proj = "X%0.2fc/-%0.2fc" %(width, height)
+        region = [0, self.length, self.min_depth, self.max_depth]
+        data = []
+        for i in range(self.nx):
+            for j in range(self.ny):
+                dist = i*self.grid_w
+                depth = j*self.grid_h 
+                if self.weight[i,j]>2:
+                    _tmp = self.data[i,j]/(self.weight[i,j]**0.75)
+                else:
+                    _tmp = 0.0
+                data.append([dist,depth,_tmp])
+        data = np.array(data)
+        sp = "%f/%f" %(self.grid_w, self.grid_h)
+        grd = pygmt.xyz2grd(data, region=region, spacing=sp)
+        fig = pygmt.Figure()
+        pygmt.makecpt(cmap="polar",series=[vmin, vmax, 0.001],background=True)
+        fig.grdimage(projection=proj,
+            grid=grd,
+            region=region,
+            frame=["af", "WSne" ],
+            cmap=True,)
+        if fname:
+            fig.savefig(fn)
+        else:
+            fig.show()
+
+        
+
