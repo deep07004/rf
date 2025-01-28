@@ -59,20 +59,26 @@ class CCPImage(object):
         self.weight = np.zeros([self.nx+1,self.ny])
 
 
-    def add_data(self, stream=None):
+    def add_data(self, stream=None, fz=True):
+        import concurrent.futures
         if not stream or len(stream) == 0:
             print("There is no data to add")
             return None
-        for tr in tqdm(stream):
-            _data = self.migrate(tr)
-            if len(_data) > 0:
-                for _tmp in _data:
-                    i, j, val, wt = _tmp
-                    self.data[i,j] += val
-                    self.weight[i,j] += wt
+        processes =[]
+        with concurrent.futures.ProcessPoolExecutor() as executor:
+            for tr in stream:
+                p = executor.submit(self.migrate, tr, fz=fz)
+                processes.append(p)
+            for f in tqdm(concurrent.futures.as_completed(processes), total=len(processes)):
+                _data = f.result()
+                if len(_data) > 0:
+                    for _tmp in _data:
+                        i, j, val, wt = _tmp
+                        self.data[i,j] += val
+                        self.weight[i,j] += wt
 
 
-    def migrate(self, tr):
+    def migrate(self, tr, fz=True):
         """
         We will use spherical travel time equation for migration. So eath flattening 
         transfomation is not required and slowness should be in deg/radian.
@@ -102,7 +108,7 @@ class CCPImage(object):
             vp , vs = avg_vpvs(self.mod, dd0, dd)
             wavep = 0.005*dd+1.0
             wavelength = vs/self.maxfreq
-            fz = np.sqrt(wavelength * dd + 0.25 * wavelength * wavelength)
+            fz_rad = np.sqrt(wavelength * dd + 0.25 * wavelength * wavelength)
             R = 6371.0 - dd
             # vertical slownesses of P and S wave in spherical coordinate system
             a = np.sqrt(abs((R*R) / (vp * vp) - P * P));
@@ -130,15 +136,18 @@ class CCPImage(object):
                 if (i2 > npts):
                     continue # i.e no sample in cell
                 tt += dt # Update time
-                i3 = int(np.ceil(fz /self.grid_w))
                 data_sum = np.sum(tr.data[i1:i2])
                 weight = i2-i1+1
-                if i3 < 2:
-                    out.append([i,k,data_sum, weight])
+                if fz:
+                    i3 = int(np.ceil(fz_rad /self.grid_w))
+                    if i3 < 2:
+                        out.append([i,k,data_sum, weight])
+                    else:
+                        for i4 in range(i-i3+1,i+i3):
+                            if i4 > 0 and i4 < self.nx:
+                                out.append([i4,k,data_sum,weight])
                 else:
-                    for i4 in range(i-i3+1,i+i3):
-                        if i4 > 0 and i4 < self.nx:
-                            out.append([i4,k,data_sum,weight])
+                    out.append([i,k,data_sum, weight])
             else:
                 nseg = abs(j-i)
                 #Compute contribution from each segment
@@ -176,29 +185,33 @@ class CCPImage(object):
                     if (i2 > npts):
                         continue # i.e no sample in cell
                     tt += dt # Update time
-                    i3 = int(np.ceil(fz /self.grid_w))
+                    
                     data_sum = np.sum(tr.data[i1:i2])
                     weight = i2-i1+1
-                    if i3 < 2:
-                        out.append([i,k,data_sum, weight])
+                    if fz:
+                        i3 = int(np.ceil(fz_rad /self.grid_w))
+                        if i3 < 2:
+                            out.append([ix,k,data_sum, weight])
+                        else:
+                            for i4 in range(ix-i3+1,ix+i3):
+                                if i4 > 0 and i4 < self.nx:
+                                    out.append([i4,k,data_sum,weight])
                     else:
-                        for i4 in range(i-i3+1,i+i3):
-                            if i4 > 0 and i4 < self.nx:
-                                out.append([i4,k,data_sum,weight])
+                        out.append([ix,k,data_sum, weight])
             xx += dx
         return out
-    def plot(self, vmin = -0.05, vmax = 0.05, fname=None):
-        import pygmt
-        
+    def plot(self, vmin = -0.05, vmax = 0.05, smooth=None, width=14, height=None, fname=None):
+        import pygmt     
         width = 14
-        height = ((self.max_depth-self.min_depth)/self.length)*width
+        if height is None:
+            height = ((self.max_depth-self.min_depth)/self.length)*width
         proj = "X%0.2fc/-%0.2fc" %(width, height)
         region = [0, self.length, self.min_depth, self.max_depth]
         data = []
         for i in range(self.nx):
             for j in range(self.ny):
-                dist = i*self.grid_w
-                depth = j*self.grid_h 
+                dist = i*self.grid_w 
+                depth = j*self.grid_h
                 if self.weight[i,j]>2:
                     _tmp = self.data[i,j]/(self.weight[i,j]**0.75)
                 else:
@@ -207,10 +220,15 @@ class CCPImage(object):
         data = np.array(data)
         sp = "%f/%f" %(self.grid_w, self.grid_h)
         grd = pygmt.xyz2grd(data, region=region, spacing=sp)
+        if not smooth:
+            fgrd = grd
+        else:
+            filt=smooth
+            fgrd = pygmt.grdfilter(grid=grd, filter=filt, distance="0")
         fig = pygmt.Figure()
         pygmt.makecpt(cmap="polar",series=[vmin, vmax, 0.001],background=True)
         fig.grdimage(projection=proj,
-            grid=grd,
+            grid=fgrd,
             region=region,
             frame=["af", "WSne" ],
             cmap=True,)
