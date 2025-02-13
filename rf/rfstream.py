@@ -940,7 +940,8 @@ def rfstats(obj=None, event=None, station=None,
     :param dist_range: if epicentral of event is not in this intervall, None
         is returned by this function,\n
         if phase == 'P' defaults to (30, 90),\n
-        if phase == 'S' defaults to (50, 85)
+        if phase == 'S' defaults to (50, 85),\n
+        if phase == 'SKS' defaults to (85, 120)
     :param tt_model: model for travel time calculation.
         (see the `obspy.taup` module, default: iasp91)
     :param pp_depth: Depth for piercing point calculation
@@ -974,10 +975,15 @@ def rfstats(obj=None, event=None, station=None,
                     traces.append(f.result())
         stream.traces = traces
         return stream
-    if dist_range == 'default' and phase.upper() in 'PS':
-        dist_range = (30, 90) if phase.upper() == 'P' else (50, 85)
-    elif dist_range == 'default':
-        raise ValueError('Please specify dist_range parameter')
+    if dist_range == 'default':
+        if phase.upper() == 'P':
+            dist_range = (30, 90)
+        elif phase.upper() == 'S':
+            dist_range = (50, 85)
+        elif phase.upper() == "SKS":
+            dist_range = (85, 120)
+        else:
+            raise ValueError('Please specify dist_range parameter')
     st = AttribDict({}) if obj is None else obj
     if event is not None and station is not None:
         st.stats.update(obj2stats(event=event, station=station))
@@ -1006,6 +1012,6 @@ def rfstats(obj=None, event=None, station=None,
     if pp_depth is not None:
         model = load_model(model)
         if pp_phase is None:
-            pp_phase = 'S' if phase.upper().endswith('P') else 'P'
+            pp_phase = phase.upper()[-1]
         model.ppoint(st.stats, pp_depth, phase=pp_phase)
     return st

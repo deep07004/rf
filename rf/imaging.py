@@ -19,11 +19,12 @@ def slowness_section(stream,comp="Q",smin=4.4,smax=8.8,nbin=20,tmin=-5, tmax=25,
     Plot slowness section using pygmt. 
     """
     import pygmt
-    st = stream.select(component=comp).slice2(tmin, tmax,'onset').copy()
+    st = stream.select(component=comp).copy()
     if fmin is not None and fmax is not None:
         st.filter('bandpass',freqmin=fmin, freqmax=fmax, corners=2, zerophase=True)
     if not no_moveout:
         st = st.moveout(phase=phase, ref=ref_slo)
+    st.slice2(tmin, tmax,'onset')
     binned_st = st.bin(key='slowness',start=smin, stop=smax, nbins=nbin,
                         pc_overlap=0, pws=pws, phase=phase, ref=ref_slo)
     st_all = st.stack()
@@ -85,11 +86,12 @@ def baz_section(stream,comp="Q",bazmin=0,bazmax=360,nbin=36,tmin=-5, tmax=25, ph
     Plot backazimuth section using pygmt. 
     """
     import pygmt
-    st = stream.select(component=comp).slice2(tmin, tmax,'onset').copy()
+    st = stream.select(component=comp).copy()
     if fmin is not None and fmax is not None:
         st.filter('bandpass',freqmin=fmin, freqmax=fmax, corners=2, zerophase=True)
     if not no_moveout:
         st = st.moveout(phase=phase, ref=ref_slo)
+    st.slice2(tmin, tmax,'onset')
     binned_st = st.bin(key='baz',start=bazmin, stop=bazmax, nbins=nbin,
                         pc_overlap=0, pws=pws, phase=phase, ref=ref_slo)
     st_all = st.stack()
